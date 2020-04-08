@@ -68,7 +68,8 @@ export class ProjectStorage {
       project_name
     );
 
-    return (this.projectList[index].groups[groupName] = []);
+    this.projectList[index].groups[groupName] = [];
+    return;
   }
 
   // deleting group
@@ -139,10 +140,7 @@ export class ProjectStorage {
       project_name
     );
 
-    if (index > -1) {
-      found = true;
-    }
-    return found;
+    return index > -1 ? true : false;
   }
 
   public existsWithRootPath(root_path: string): Project {
@@ -171,11 +169,11 @@ export class ProjectStorage {
     try {
       items = JSON.parse(fs.readFileSync(this.filename).toString());
       this.projectList = items as ProjectList;
-
-      return "";
     } catch (error) {
       return error.toString();
     }
+
+    return "";
   }
 
   public reload() {

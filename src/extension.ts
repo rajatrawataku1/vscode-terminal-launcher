@@ -1,33 +1,33 @@
-import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 
-import { Config, getConfig } from "./config";
+import { getConfig } from "./config";
 import {
   groupNameInputBoxOptions,
   commandNameInputBoxOptions,
   commandScriptInputBoxOptions,
   projectNameInputBoxOptions,
 } from "./inputBoxOptions";
-import { Project, ProjectStorage, TerminalCommand } from "./storage";
-import { create } from "domain";
+import { ProjectStorage, TerminalCommand } from "./storage";
 
-const homeDir = os.homedir();
 const PROJECTS_FILE = `terminal-projects.json`;
 
 const enum USER_OPTIONS {
   "ADD_COMMANDS" = "Add Commands",
-  "ADD_GROUP" = "Add Group",
   "CANCEL" = "CANCEL",
 }
+
+const enum DISPLAY_MESSAGE {
+  "COMMANDS_SAVED" = "Commands saved!",
+  "DEFINE_PROJECT_NAME" = "You must define a name for the project.",
+  "PROJECT_ALREADY_EXISTS" = "Project already exists!",
+  "COMMAND_ADDED" = "Command is successfully added, do you need to add More?",
+}
+
 // this method is called when your extension is activated
-export function activate(context: vscode.ExtensionContext) {
-  const configurations: Config = getConfig();
-  const projectStorage: ProjectStorage = new ProjectStorage(
-    getProjectFilePath()
-  );
-  const errorLoading: string = projectStorage.load();
+export const activate = (context: vscode.ExtensionContext) => {
+  const configurations = getConfig();
+  const projectStorage = new ProjectStorage(getProjectFilePath());
 
   vscode.commands.registerCommand(`terminalLauncher.saveProject`, () =>
     saveProject()
@@ -39,41 +39,35 @@ export function activate(context: vscode.ExtensionContext) {
     runProject()
   );
 
-  function saveProject(): void {
-    const projectName = vscode.workspace.rootPath.substr(
+  const saveProject = () => {
+    const directoryProjectName = vscode.workspace.rootPath.substr(
       vscode.workspace.rootPath.lastIndexOf("/") + 1
     );
     const projectPath = vscode.workspace.rootPath;
 
     vscode.window
-      .showInputBox(projectNameInputBoxOptions(projectName))
-      .then(async (_projectName) => {
-        if (typeof _projectName === "undefined") {
+      .showInputBox(projectNameInputBoxOptions(directoryProjectName))
+      .then(async (projectName) => {
+        if (typeof projectName === "undefined") {
           return;
         }
-        if (_projectName === "") {
-          vscode.window.showWarningMessage(
-            "You must define a name for the project."
-          );
+        if (projectName.trim() === "") {
+          vscode.window.showWarningMessage(DISPLAY_MESSAGE.DEFINE_PROJECT_NAME);
           return;
         }
 
-        if (!projectStorage.exists(_projectName)) {
-          projectStorage.addToProjectList(_projectName, projectPath);
-          await addNewCommands(_projectName);
+        // everytime you add new commands you will always need to fill the group-name
+        // whether this group-name exists or not the new command will over-ride the group-name
+
+        if (!projectStorage.exists(projectName)) {
+          projectStorage.addToProjectList(projectName, projectPath);
+          await addNewCommands(projectName);
         } else {
-          const optionAddCommand = {
-            title: USER_OPTIONS.ADD_COMMANDS,
-          } as vscode.MessageItem;
-          const optionCancel = {
-            title: USER_OPTIONS.CANCEL,
-          } as vscode.MessageItem;
-
           vscode.window
             .showInformationMessage(
-              "Project already exists!",
-              optionAddCommand,
-              optionCancel
+              DISPLAY_MESSAGE.PROJECT_ALREADY_EXISTS,
+              { title: USER_OPTIONS.ADD_COMMANDS },
+              { title: USER_OPTIONS.CANCEL }
             )
             .then(async (option) => {
               // nothing selected
@@ -82,15 +76,16 @@ export function activate(context: vscode.ExtensionContext) {
               }
 
               switch (option.title) {
+                // switch for future use case
                 case USER_OPTIONS.ADD_COMMANDS: {
-                  await addNewCommands(_projectName);
+                  await addNewCommands(projectName);
                   return;
                 }
               }
             });
         }
       });
-  }
+  };
 
   function editProjects(): void {
     vscode.workspace.openTextDocument(getProjectFilePath()).then((document) => {
@@ -99,11 +94,10 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   function getProjectFilePath(): string {
-    let projectFile: string;
-    const projectsConfigurationsLocation: string =
-      configurations.projectsConfigurationsLocation;
+    let projectFile = "";
+    const { projectsConfigurationsLocation } = configurations;
 
-    if (projectsConfigurationsLocation !== "") {
+    if (!!projectsConfigurationsLocation) {
       projectFile = path.join(projectsConfigurationsLocation, PROJECTS_FILE);
     } else {
       const appdata =
@@ -118,6 +112,9 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   async function createTerminal(openNewTerminalWindow, terminal) {
+    // for every first call i.e (terminal id = 0) there will be a new terminal window
+    // and for all other cases a split will be made in the current active window
+
     let command = openNewTerminalWindow
       ? "workbench.action.terminal.split"
       : "workbench.action.terminal.newInActiveWorkspace";
@@ -133,7 +130,6 @@ export function activate(context: vscode.ExtensionContext) {
               })
               .then(async () => {
                 terminalInstance.sendText(terminal.script, true);
-                console.log(openNewTerminalWindow);
                 listener.dispose();
                 resolve();
               });
@@ -145,85 +141,74 @@ export function activate(context: vscode.ExtensionContext) {
 
   async function runProject() {
     const workspacePath = vscode.workspace.rootPath;
-    const project: Project = projectStorage.existsWithRootPath(workspacePath);
+    const project = projectStorage.existsWithRootPath(workspacePath);
 
     const { groups = {} } = project;
 
     const groupNames = Object.keys(groups);
-    for (let i = 0; i < groupNames.length; i++) {
-      let commands = groups[groupNames[i]];
-      for (let j = 0; j < commands.length; j++) {
-        await createTerminal(j, commands[j]);
+    for (let groupIndex = 0; groupIndex < groupNames.length; groupIndex++) {
+      let commands = groups[groupNames[groupIndex]];
+      for (
+        let commandIndex = 0;
+        commandIndex < commands.length;
+        commandIndex++
+      ) {
+        await createTerminal(commandIndex, commands[commandIndex]);
       }
     }
   }
 
   async function addNewCommands(projectName: string): Promise<boolean> {
-    const commands: TerminalCommand[] = [];
-    const _newGroupName = await getGroupName();
+    const inputCommands = [] as TerminalCommand[];
+    const newGroupName = await getGroupName();
+
     do {
-      const __command: TerminalCommand = await getNewCommand();
-      commands.push(__command);
+      const command: TerminalCommand = await getNewCommand();
+      inputCommands.push(command);
     } while (await isDone());
 
-    projectStorage.addCommands(projectName, _newGroupName, commands);
-
+    projectStorage.addCommands(projectName, newGroupName, inputCommands);
     projectStorage.save();
-    vscode.window.showInformationMessage("Commands saved!");
+
+    vscode.window.showInformationMessage(DISPLAY_MESSAGE.COMMANDS_SAVED);
     return Promise.resolve(true);
   }
 
   async function getNewCommand(): Promise<TerminalCommand> {
-    const _commandName = await vscode.window.showInputBox(
+    const commandName = await vscode.window.showInputBox(
       commandNameInputBoxOptions()
     );
-    const _commandScript = await vscode.window.showInputBox(
+    const commandScript = await vscode.window.showInputBox(
       commandScriptInputBoxOptions()
     );
 
-    const _command: TerminalCommand = {
-      name: _commandName,
-      script: _commandScript,
+    const command: TerminalCommand = {
+      name: commandName,
+      script: commandScript,
     };
 
-    return Promise.resolve(_command);
-  }
-
-  async function addNewGroup(projectName: string): Promise<string> {
-    const _groupName = await getGroupName();
-    projectStorage.addGroup(projectName, _groupName);
-
-    projectStorage.save();
-    vscode.window.showInformationMessage("Group saved!");
-    return Promise.resolve(_groupName);
+    return Promise.resolve(command);
   }
 
   async function getGroupName(): Promise<string> {
-    const _groupName = await vscode.window.showInputBox(
+    const groupName = await vscode.window.showInputBox(
       groupNameInputBoxOptions()
     );
 
-    return Promise.resolve(_groupName);
+    return Promise.resolve(groupName);
   }
 
   async function isDone(): Promise<boolean> {
-    const optionYes = {
-      title: "Yes",
-    } as vscode.MessageItem;
-    const optionNo = {
-      title: "No",
-    } as vscode.MessageItem;
-
     const selection = await vscode.window.showInformationMessage(
-      `command is successfully added, do you need to add More?`,
-      optionYes,
-      optionNo
+      DISPLAY_MESSAGE.COMMAND_ADDED,
+      { title: "Yes" },
+      { title: "No" }
     );
 
-    if (selection.title === `Yes`) {
+    if (selection && selection.title === `Yes`) {
       return Promise.resolve(true);
-    } else {
-      return Promise.resolve(false);
     }
+
+    return Promise.resolve(false);
   }
-}
+};
