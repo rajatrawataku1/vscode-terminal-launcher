@@ -15,6 +15,8 @@ const PROJECTS_FILE = `terminal-projects.json`;
 const enum USER_OPTIONS {
   "ADD_COMMANDS" = "Add Commands",
   "CANCEL" = "CANCEL",
+  "ADD_PROJECT" = "Add Project",
+  "EDIT_TERMINAL_PROJECT" = "Edit Terminal Project",
 }
 
 const enum DISPLAY_MESSAGE {
@@ -22,6 +24,8 @@ const enum DISPLAY_MESSAGE {
   "DEFINE_PROJECT_NAME" = "You must define a name for the project.",
   "PROJECT_ALREADY_EXISTS" = "Project already exists!",
   "COMMAND_ADDED" = "Command is successfully added, do you need to add More?",
+  "NO_PROJECT_FOUND" = "No Confiugration found for current project.",
+  "WRONG_JSON" = "Not a valid json file. (Add {} if is empty)",
 }
 
 // this method is called when your extension is activated
@@ -39,7 +43,22 @@ export const activate = (context: vscode.ExtensionContext) => {
     runProject()
   );
 
+  // registering command first because activate is only called once
+  // and after registration doing error checks for the JSON file
+  const errorLoading = projectStorage.load();
+  if (errorLoading) {
+    handleErrors();
+    return;
+  }
+
   const saveProject = () => {
+    // reloading the project list before saving a new project
+    const errorLoading = projectStorage.reload();
+    if (errorLoading) {
+      handleErrors();
+      return;
+    }
+
     const directoryProjectName = vscode.workspace.rootPath.substr(
       vscode.workspace.rootPath.lastIndexOf("/") + 1
     );
@@ -81,6 +100,9 @@ export const activate = (context: vscode.ExtensionContext) => {
                   await addNewCommands(projectName);
                   return;
                 }
+
+                default:
+                  return;
               }
             });
         }
@@ -140,8 +162,36 @@ export const activate = (context: vscode.ExtensionContext) => {
   }
 
   async function runProject() {
+    // reloadng project list before  running project
+    const errorLoading = projectStorage.reload();
+    if (errorLoading) {
+      handleErrors();
+      return;
+    }
+
     const workspacePath = vscode.workspace.rootPath;
     const project = projectStorage.existsWithRootPath(workspacePath);
+
+    if (!project) {
+      const selection = await vscode.window.showInformationMessage(
+        DISPLAY_MESSAGE.NO_PROJECT_FOUND,
+        { title: USER_OPTIONS.ADD_PROJECT },
+        { title: USER_OPTIONS.CANCEL }
+      );
+
+      if (!selection) {
+        return;
+      }
+
+      switch (selection.title) {
+        case USER_OPTIONS.ADD_PROJECT: {
+          saveProject();
+          return;
+        }
+        default:
+          return;
+      }
+    }
 
     const { groups = {} } = project;
 
@@ -205,10 +255,22 @@ export const activate = (context: vscode.ExtensionContext) => {
       { title: "No" }
     );
 
-    if (selection && selection.title === `Yes`) {
+    if (!selection || (selection && selection.title === `Yes`)) {
       return Promise.resolve(true);
     }
 
     return Promise.resolve(false);
+  }
+
+  async function handleErrors() {
+    const selection = await vscode.window.showInformationMessage(
+      DISPLAY_MESSAGE.WRONG_JSON,
+      { title: USER_OPTIONS.EDIT_TERMINAL_PROJECT },
+      { title: USER_OPTIONS.CANCEL }
+    );
+
+    if (selection && selection.title === USER_OPTIONS.EDIT_TERMINAL_PROJECT) {
+      editProjects();
+    }
   }
 };

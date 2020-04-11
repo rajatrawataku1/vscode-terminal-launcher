@@ -182,6 +182,7 @@ export class ProjectStorage {
     // missing file (new install)
     if (!fs.existsSync(this.filename)) {
       this.projectList = items as ProjectList;
+      return "";
     } else {
       this.load();
     }
