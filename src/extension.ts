@@ -212,15 +212,25 @@ export const activate = (context: vscode.ExtensionContext) => {
     const inputCommands = [] as TerminalCommand[];
     const newGroupName = await getGroupName();
 
+    if (!newGroupName) {
+      return;
+    }
+
     do {
       const command: TerminalCommand = await getNewCommand();
-      inputCommands.push(command);
+      // user is no longer intersted in pushing new commands, hence break the loop
+      if (!!command) {
+        inputCommands.push(command);
+      } else {
+        break;
+      }
     } while (await isDone());
 
-    projectStorage.addCommands(projectName, newGroupName, inputCommands);
-    projectStorage.save();
-
-    vscode.window.showInformationMessage(DISPLAY_MESSAGE.COMMANDS_SAVED);
+    if (inputCommands.length > 0) {
+      projectStorage.addCommands(projectName, newGroupName, inputCommands);
+      projectStorage.save();
+      vscode.window.showInformationMessage(DISPLAY_MESSAGE.COMMANDS_SAVED);
+    }
     return Promise.resolve(true);
   }
 
@@ -231,6 +241,11 @@ export const activate = (context: vscode.ExtensionContext) => {
     const commandScript = await vscode.window.showInputBox(
       commandScriptInputBoxOptions()
     );
+
+    // this check is when user has cancelled the inputBox
+    if (!commandName || !commandScript) {
+      return Promise.resolve(undefined);
+    }
 
     const command: TerminalCommand = {
       name: commandName,
@@ -255,7 +270,7 @@ export const activate = (context: vscode.ExtensionContext) => {
       { title: "No" }
     );
 
-    if (!selection || (selection && selection.title === `Yes`)) {
+    if (selection && selection.title === `Yes`) {
       return Promise.resolve(true);
     }
 
